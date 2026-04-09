@@ -1,0 +1,5 @@
+{
+  "name": "Editor de Sites com IA - By Studio 4x",
+  "description": "Uma ferramenta para editar sites HTML hospedados na Hostinger via integração com GitHub e Inteligência Artificial.",
+  "requestFramePermissions": []
+}

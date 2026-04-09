@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the application (admin or client)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email" },
+        "role": { "type": "string", "enum": ["admin", "client"], "description": "User role" },
+        "name": { "type": "string", "description": "User name" },
+        "allowedRepos": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "List of repository full names (owner/repo) the client can access"
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles and permissions"
+    }
+  }
+}

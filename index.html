@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Editor de Sites com IA - By Studio 4x</title>
+    <script>
+      // Prevent libraries from overwriting fetch, which causes errors in this environment
+      (function() {
+        const originalFetch = window.fetch;
+        if (originalFetch) {
+          try {
+            Object.defineProperty(window, 'fetch', {
+              configurable: false,
+              enumerable: true,
+              get: function() { return originalFetch; },
+              set: function() { console.warn('Blocked attempt to overwrite fetch'); }
+            });
+          } catch (e) {
+            console.warn('Could not lock fetch, but it might already be protected.');
+          }
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
