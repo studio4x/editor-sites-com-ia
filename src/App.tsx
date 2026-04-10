@@ -82,6 +82,7 @@ export default function App() {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [clients, setClients] = useState<UserData[]>([]);
   const [isCreatingClient, setIsCreatingClient] = useState(false);
+  const [editingClient, setEditingClient] = useState<UserData | null>(null);
   const [newClient, setNewClient] = useState({ name: '', email: '', password: '', allowedRepos: [] as string[] });
 
   // New state for the requested workflow
@@ -275,6 +276,18 @@ export default function App() {
       setIsHistoryOpen(false);
     }
   }, [selectedRepo]);
+
+  const handleUpdateClientRepos = async (clientUid: string, allowedRepos: string[]) => {
+    try {
+      await updateDoc(doc(db, 'users', clientUid), { allowedRepos });
+      setClients(prev => prev.map(c => c.uid === clientUid ? { ...c, allowedRepos } : c));
+      setStatus({ type: 'success', message: 'Permissões do cliente atualizadas!' });
+      setEditingClient(null);
+    } catch (error: any) {
+      console.error("Erro ao atualizar cliente:", error);
+      setStatus({ type: 'error', message: 'Erro ao atualizar permissões do cliente' });
+    }
+  };
 
   const handleCreateClient = async () => {
     if (!newClient.email || !newClient.password) return;
@@ -581,12 +594,13 @@ export default function App() {
 
           if (!commitRes.ok) throw new Error('Falha ao fazer commit');
 
-          setChatMessages(prev => [...prev, { role: 'ai', text: 'Alteração concluída e enviada para o site! Atualizando a visualização...' }]);
+          setChatMessages(prev => [...prev, { role: 'ai', text: 'Alteração concluída e enviada para o site! Atualizando a visualização em instantes...' }]);
           
-          // Aguarda 3 segundos para dar tempo do servidor/CDN processar a mudança
-          setTimeout(() => {
-            refreshIframe();
-          }, 3000);
+          // Aguarda 5 segundos para dar tempo do servidor/CDN processar a mudança
+          // Tentamos atualizar algumas vezes para garantir
+          setTimeout(() => refreshIframe(), 3000);
+          setTimeout(() => refreshIframe(), 6000);
+          setTimeout(() => refreshIframe(), 10000);
           
           fetchHistory();
           setPendingAction(null);
@@ -884,18 +898,68 @@ export default function App() {
                 <div className="space-y-2">
                   {clients.map(client => (
                     <div key={client.uid} className="p-3 bg-white border border-zinc-200 rounded-xl text-sm">
-                      <p className="font-medium">{client.name}</p>
-                      <p className="text-xs text-zinc-500 mb-2">{client.email}</p>
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-zinc-700">Acesso a:</p>
-                        {client.allowedRepos.length === 0 ? (
-                          <p className="text-xs text-zinc-400">Nenhum repositório</p>
-                        ) : (
-                          client.allowedRepos.map(repo => (
-                            <p key={repo} className="text-xs text-zinc-500 truncate">• {repo}</p>
-                          ))
-                        )}
+                      <div className="flex justify-between items-start mb-1">
+                        <div>
+                          <p className="font-medium">{client.name}</p>
+                          <p className="text-xs text-zinc-500">{client.email}</p>
+                        </div>
+                        <button 
+                          onClick={() => setEditingClient(editingClient?.uid === client.uid ? null : client)}
+                          className="p-1 hover:bg-zinc-100 rounded-md transition-colors text-zinc-400 hover:text-zinc-600"
+                          title="Editar permissões"
+                        >
+                          <Settings className="w-4 h-4" />
+                        </button>
                       </div>
+
+                      {editingClient?.uid === client.uid ? (
+                        <div className="mt-3 pt-3 border-t border-zinc-100 space-y-3">
+                          <p className="text-xs font-medium text-zinc-700">Editar Acessos:</p>
+                          <div className="max-h-40 overflow-y-auto space-y-1 bg-zinc-50 p-2 rounded-lg">
+                            {repos.map(repo => (
+                              <label key={repo.id} className="flex items-center gap-2 text-xs">
+                                <input 
+                                  type="checkbox" 
+                                  checked={editingClient.allowedRepos.includes(repo.full_name)}
+                                  onChange={(e) => {
+                                    const currentRepos = editingClient.allowedRepos;
+                                    const newRepos = e.target.checked 
+                                      ? [...currentRepos, repo.full_name]
+                                      : currentRepos.filter(r => r !== repo.full_name);
+                                    setEditingClient({...editingClient, allowedRepos: newRepos});
+                                  }}
+                                />
+                                <span className="truncate">{repo.full_name}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => setEditingClient(null)}
+                              className="flex-1 py-1.5 text-xs bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                            <button 
+                              onClick={() => handleUpdateClientRepos(client.uid, editingClient.allowedRepos)}
+                              className="flex-1 py-1.5 text-xs bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                            >
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1 mt-2">
+                          <p className="text-xs font-medium text-zinc-700">Acesso a:</p>
+                          {client.allowedRepos.length === 0 ? (
+                            <p className="text-xs text-zinc-400">Nenhum repositório</p>
+                          ) : (
+                            client.allowedRepos.map(repo => (
+                              <p key={repo} className="text-xs text-zinc-500 truncate">• {repo}</p>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
