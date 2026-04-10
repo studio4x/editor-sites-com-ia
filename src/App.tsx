@@ -36,7 +36,13 @@ import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Modality } from "@google/genai";
 
 // Initialize Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const getAI = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY não encontrada. Verifique as variáveis de ambiente.');
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 const decodeBase64UTF8 = (base64: string) => {
   const binaryString = atob(base64);
@@ -626,6 +632,7 @@ export default function App() {
           Responda APENAS "NAO" se for uma negação, cancelamento ou pedido de mudança (ex: não, cancela, espera, mude para azul).
         `;
         
+        const ai = getAI();
         const response = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
           contents: confirmPrompt,
@@ -666,6 +673,7 @@ export default function App() {
             });
           }
 
+          const ai = getAI();
           const aiRes = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: { parts },
@@ -755,6 +763,7 @@ export default function App() {
           });
         });
 
+        const ai = getAI();
         const aiRes = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
           contents: { parts },
