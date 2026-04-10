@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -8,7 +7,6 @@ import cookieParser from 'cookie-parser';
 import axios from 'axios';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-
 import fs from 'fs';
 
 dotenv.config();
@@ -17,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load Firebase config
-const firebaseConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let firebaseConfig: any = {};
 if (fs.existsSync(firebaseConfigPath)) {
   firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
@@ -455,7 +453,8 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -463,20 +462,29 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('/admin', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API route not found' });
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  // Only listen if not running as a Vercel function
+  if (process.env.VERCEL !== '1') {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
   
   return app;
 }
 
-export default startServer();
+const appPromise = startServer();
+
+// Export for Vercel
+export default async (req: any, res: any) => {
+  const app = await appPromise;
+  return app(req, res);
+};
