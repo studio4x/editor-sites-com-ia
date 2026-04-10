@@ -512,9 +512,16 @@ export default function App() {
 
   const refreshIframe = () => {
     if (!siteUrl) return;
-    const urlObj = new URL(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`);
-    urlObj.searchParams.set('t', Date.now().toString());
-    setIframeUrl(urlObj.toString());
+    try {
+      const base = siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`;
+      const urlObj = new URL(base);
+      urlObj.searchParams.set('t', Date.now().toString());
+      setIframeUrl(urlObj.toString());
+    } catch (e) {
+      console.error("Invalid URL for refresh:", siteUrl);
+      // Fallback to just setting the URL again with a timestamp if it's not a valid full URL yet
+      setIframeUrl(`${siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`}?t=${Date.now()}`);
+    }
   };
 
   const handleSendMessage = async (overrideMsg?: string) => {
@@ -596,11 +603,13 @@ export default function App() {
 
           setChatMessages(prev => [...prev, { role: 'ai', text: 'Alteração concluída e enviada para o site! Atualizando a visualização em instantes...' }]);
           
-          // Aguarda 5 segundos para dar tempo do servidor/CDN processar a mudança
-          // Tentamos atualizar algumas vezes para garantir
+          // Aguarda alguns segundos para dar tempo do servidor/CDN processar a mudança
+          // Tentamos atualizar várias vezes para garantir que a mudança apareça
           setTimeout(() => refreshIframe(), 3000);
           setTimeout(() => refreshIframe(), 6000);
           setTimeout(() => refreshIframe(), 10000);
+          setTimeout(() => refreshIframe(), 15000);
+          setTimeout(() => refreshIframe(), 20000);
           
           fetchHistory();
           setPendingAction(null);
@@ -1085,6 +1094,7 @@ export default function App() {
             
             {/* Iframe */}
             <iframe 
+              key={iframeUrl}
               src={iframeUrl} 
               className="w-full flex-1 bg-white"
               title="Site Preview"
