@@ -20,7 +20,11 @@ import {
   ChevronLeft,
   Users,
   Settings,
-  Plus
+  Plus,
+  Mic,
+  MicOff,
+  Image as ImageIcon,
+  Paperclip
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -29,8 +33,10 @@ import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, signOu
 import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import ReactMarkdown from 'react-markdown';
 
-// Types for Gemini
-type GoogleGenAI = any;
+import { GoogleGenAI, Modality } from "@google/genai";
+
+// Initialize Gemini
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 const decodeBase64UTF8 = (base64: string) => {
   const binaryString = atob(base64);
@@ -91,7 +97,11 @@ export default function App() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<{role: 'user' | 'ai', text: string}[]>([]);
   const [chatInput, setChatInput] = useState('');
-  const [pendingAction, setPendingAction] = useState<{ userMsg: string, currentContent: string, sha: string } | null>(null);
+  const [attachedMedia, setAttachedMedia] = useState<{type: 'image' | 'audio', data: string, mimeType: string}[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [pendingAction, setPendingAction] = useState<{ userMsg: string, currentContent: string, sha: string, media?: any[] } | null>(null);
   
   // History state
   const [history, setHistory] = useState<Commit[]>([]);
@@ -524,14 +534,86 @@ export default function App() {
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile();
+        if (blob) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const base64 = event.target?.result as string;
+            setAttachedMedia(prev => [...prev, {
+              type: 'image',
+              data: base64.split(',')[1],
+              mimeType: blob.type
+            }]);
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64 = event.target?.result as string;
+          setAttachedMedia(prev => [...prev, {
+            type: 'audio',
+            data: base64.split(',')[1],
+            mimeType: 'audio/webm'
+          }]);
+        };
+        reader.readAsDataURL(audioBlob);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Erro ao acessar microfone:", err);
+      setStatus({ type: 'error', message: 'Não foi possível acessar o microfone.' });
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const removeMedia = (index: number) => {
+    setAttachedMedia(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSendMessage = async (overrideMsg?: string) => {
     const msgToSend = overrideMsg || chatInput;
-    if (!msgToSend.trim() || !selectedRepo) return;
+    if (!msgToSend.trim() && attachedMedia.length === 0 && !selectedRepo) return;
 
     const userMsg = msgToSend;
-    if (!overrideMsg) setChatInput('');
+    const currentMedia = [...attachedMedia];
+    if (!overrideMsg) {
+      setChatInput('');
+      setAttachedMedia([]);
+    }
     
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg || (currentMedia.length > 0 ? "[Mídia enviada]" : "") }]);
     setIsProcessing(true);
 
     try {
@@ -543,42 +625,53 @@ export default function App() {
           Responda APENAS "SIM" se for uma confirmação ou concordância (ex: sim, ok, pode fazer, manda ver, yes).
           Responda APENAS "NAO" se for uma negação, cancelamento ou pedido de mudança (ex: não, cancela, espera, mude para azul).
         `;
-        const confirmRes = await fetch('/api/gemini/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: confirmPrompt })
+        
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: confirmPrompt,
         });
         
-        if (!confirmRes.ok) throw new Error('Erro ao verificar confirmação');
-        const { text: confirmText } = await confirmRes.json();
+        const confirmText = response.text || "";
         
         if (confirmText.trim().toUpperCase().includes('SIM')) {
           setChatMessages(prev => [...prev, { role: 'ai', text: 'Entendido! Gerando e aplicando as alterações...' }]);
           
           // Prossegue com a geração do código
-          const generatePrompt = `
-            Você é um desenvolvedor web especialista em HTML, CSS e JS.
-            Aqui está o conteúdo atual do arquivo 'index.html' do repositório:
-            
-            \`\`\`html
-            ${pendingAction.currentContent}
-            \`\`\`
-            
-            O usuário solicitou a seguinte alteração: "${pendingAction.userMsg}"
-            
-            INSTRUÇÃO OBRIGATÓRIA: SEMPRE PRESERVE A CODIFICAÇÃO DOS TEXTOS QUANDO REALIZAR UMA ATUALIZAÇÃO. A CODIFICAÇÃO PADRÃO É AQUELA QUE CONTÉM ACENTUAÇÃO NAS PALAVRAS. Não altere os caracteres especiais ou acentos já existentes no código.
-            
-            Retorne APENAS o código HTML completo e atualizado. Não inclua explicações, markdown ou blocos de código (\`\`\`). Apenas o código puro.
-          `;
+          const parts: any[] = [
+            { text: `
+              Você é um desenvolvedor web especialista em HTML, CSS e JS.
+              Aqui está o conteúdo atual do arquivo 'index.html' do repositório:
+              
+              \`\`\`html
+              ${pendingAction.currentContent}
+              \`\`\`
+              
+              O usuário solicitou a seguinte alteração: "${pendingAction.userMsg}"
+              
+              INSTRUÇÃO OBRIGATÓRIA: SEMPRE PRESERVE A CODIFICAÇÃO DOS TEXTOS QUANDO REALIZAR UMA ATUALIZAÇÃO. A CODIFICAÇÃO PADRÃO É AQUELA QUE CONTÉM ACENTUAÇÃO NAS PALAVRAS. Não altere os caracteres especiais ou acentos já existentes no código.
+              
+              Retorne APENAS o código HTML completo e atualizado. Não inclua explicações, markdown ou blocos de código (\`\`\`). Apenas o código puro.
+            `}
+          ];
 
-          const aiRes = await fetch('/api/gemini/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: generatePrompt })
+          // Adiciona mídia se houver
+          if (pendingAction.media) {
+            pendingAction.media.forEach(m => {
+              parts.push({
+                inlineData: {
+                  data: m.data,
+                  mimeType: m.mimeType
+                }
+              });
+            });
+          }
+
+          const aiRes = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: { parts },
           });
 
-          if (!aiRes.ok) throw new Error('Erro ao gerar código com a IA');
-          const { text } = await aiRes.json();
+          const text = aiRes.text || "";
           const updatedContent = text.replace(/^```html\n?/, '').replace(/\n?```$/, '').trim();
 
           // Commit no GitHub
@@ -590,8 +683,8 @@ export default function App() {
               ...headers
             },
             body: JSON.stringify({
-              owner: selectedRepo.owner.login,
-              repo: selectedRepo.name,
+              owner: selectedRepo!.owner.login,
+              repo: selectedRepo!.name,
               path: 'index.html',
               content: updatedContent,
               message: `AI Update: ${pendingAction.userMsg}`,
@@ -604,7 +697,6 @@ export default function App() {
           setChatMessages(prev => [...prev, { role: 'ai', text: 'Alteração concluída e enviada para o site! Atualizando a visualização em instantes...' }]);
           
           // Aguarda alguns segundos para dar tempo do servidor/CDN processar a mudança
-          // Tentamos atualizar várias vezes para garantir que a mudança apareça
           setTimeout(() => refreshIframe(), 3000);
           setTimeout(() => refreshIframe(), 6000);
           setTimeout(() => refreshIframe(), 10000);
@@ -621,7 +713,7 @@ export default function App() {
       } else {
         // Passo 1: Buscar o index.html atual
         const headers = await getAuthHeaders();
-        const res = await fetch(`/api/github/contents?owner=${selectedRepo.owner.login}&repo=${selectedRepo.name}&path=index.html`, {
+        const res = await fetch(`/api/github/contents?owner=${selectedRepo!.owner.login}&repo=${selectedRepo!.name}&path=index.html`, {
           headers
         });
         
@@ -637,30 +729,41 @@ export default function App() {
         }
 
         // Passo 2: Pedir para a IA explicar a mudança
-        const explainPrompt = `
-          O usuário pediu a seguinte alteração no site: "${userMsg}"
-          
-          O código atual do site é:
-          \`\`\`html
-          ${currentContent}
-          \`\`\`
-          
-          Explique de forma breve, clara e amigável o que você vai alterar no código para atender a esse pedido.
-          Ao final, pergunte se o usuário deseja confirmar a alteração (ex: "Posso prosseguir com essas alterações?").
-          NÃO retorne código HTML agora, apenas a explicação em texto.
-        `;
+        const parts: any[] = [
+          { text: `
+            O usuário pediu a seguinte alteração no site: "${userMsg}"
+            
+            O código atual do site é:
+            \`\`\`html
+            ${currentContent}
+            \`\`\`
+            
+            Explique de forma breve, clara e amigável o que você vai alterar no código para atender a esse pedido.
+            Se houver imagens ou áudios enviados, leve-os em consideração na sua explicação.
+            Ao final, pergunte se o usuário deseja confirmar a alteração (ex: "Posso prosseguir com essas alterações?").
+            NÃO retorne código HTML agora, apenas a explicação em texto.
+          `}
+        ];
 
-        const aiRes = await fetch('/api/gemini/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: explainPrompt })
+        // Adiciona mídia
+        currentMedia.forEach(m => {
+          parts.push({
+            inlineData: {
+              data: m.data,
+              mimeType: m.mimeType
+            }
+          });
         });
 
-        if (!aiRes.ok) throw new Error('Erro ao gerar explicação com a IA');
-        const { text } = await aiRes.json();
+        const aiRes = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: { parts },
+        });
+
+        const text = aiRes.text || "";
 
         setChatMessages(prev => [...prev, { role: 'ai', text }]);
-        setPendingAction({ userMsg, currentContent, sha });
+        setPendingAction({ userMsg, currentContent, sha, media: currentMedia });
       }
 
     } catch (error) {
@@ -1201,6 +1304,34 @@ export default function App() {
                   {/* Chat Input */}
                   {!isHistoryOpen && (
                     <div className="p-3 bg-white border-t border-zinc-100 flex flex-col gap-3">
+                      {/* Attached Media Preview */}
+                      {attachedMedia.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-1">
+                          {attachedMedia.map((m, i) => (
+                            <div key={i} className="relative group">
+                              {m.type === 'image' ? (
+                                <img 
+                                  src={`data:${m.mimeType};base64,${m.data}`} 
+                                  alt="Preview" 
+                                  className="w-12 h-12 rounded-lg object-cover border border-zinc-200"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg bg-zinc-100 flex items-center justify-center border border-zinc-200">
+                                  <Mic className="w-5 h-5 text-zinc-500" />
+                                </div>
+                              )}
+                              <button 
+                                onClick={() => removeMedia(i)}
+                                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {pendingAction && !isProcessing && (
                         <div className="flex gap-2">
                           <button
@@ -1223,8 +1354,9 @@ export default function App() {
                         <textarea
                           value={chatInput}
                           onChange={(e) => setChatInput(e.target.value)}
-                          placeholder="O que deseja alterar no site?"
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all resize-none h-[80px]"
+                          onPaste={handlePaste}
+                          placeholder="O que deseja alterar no site? (Cole imagens aqui)"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 pr-24 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all resize-none h-[80px]"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) {
                               e.preventDefault();
@@ -1232,13 +1364,25 @@ export default function App() {
                             }
                           }}
                         />
-                        <button 
-                          onClick={() => handleSendMessage()}
-                          disabled={isProcessing || !chatInput.trim()}
-                          className="absolute bottom-3 right-3 p-2 bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-all disabled:opacity-30 active:scale-95"
-                        >
-                          <Send className="w-4 h-4" />
-                        </button>
+                        <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                          <button
+                            onClick={isRecording ? stopRecording : startRecording}
+                            className={cn(
+                              "p-2 rounded-lg transition-all active:scale-95",
+                              isRecording ? "bg-red-100 text-red-600 animate-pulse" : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
+                            )}
+                            title={isRecording ? "Parar Gravação" : "Gravar Áudio"}
+                          >
+                            {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                          </button>
+                          <button 
+                            onClick={() => handleSendMessage()}
+                            disabled={isProcessing || (!chatInput.trim() && attachedMedia.length === 0)}
+                            className="p-2 bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-all disabled:opacity-30 active:scale-95"
+                          >
+                            <Send className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

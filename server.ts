@@ -428,30 +428,6 @@ async function startServer() {
     }
   });
 
-  app.post('/api/gemini/generate', async (req, res) => {
-    try {
-      const { prompt } = req.body;
-      if (!prompt) {
-        return res.status(400).json({ error: 'Prompt is required' });
-      }
-
-      const { GoogleGenAI } = await import("@google/genai");
-      // Usa a chave customizada se existir, senão tenta a padrão
-      const apiKey = process.env.CUSTOM_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-      });
-
-      res.json({ text: response.text });
-    } catch (error: any) {
-      console.error('Gemini API Error:', error);
-      res.status(500).json({ error: error.message || 'Erro ao gerar conteúdo' });
-    }
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') {
     const { createServer: createViteServer } = await import('vite');
