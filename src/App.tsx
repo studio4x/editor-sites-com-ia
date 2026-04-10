@@ -802,7 +802,7 @@ export default function App() {
           className="max-w-md w-full glass p-8 rounded-3xl shadow-xl text-center"
         >
           <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Sparkles className="w-8 h-8 text-white" />
+            <img src="/favicon.svg" alt="Logo" className="w-10 h-10 invert brightness-0" referrerPolicy="no-referrer" />
           </div>
           <h1 className="text-3xl font-bold mb-2 tracking-tight">
             {isAdminRoute ? 'Acesso Administrativo' : 'Acesso do Cliente'}
@@ -884,7 +884,7 @@ export default function App() {
         <div className="w-80 h-full flex flex-col">
           <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
             <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
-              <Sparkles className="w-5 h-5 text-zinc-900" />
+              <img src="/favicon.svg" alt="Logo" className="w-6 h-6" referrerPolicy="no-referrer" />
               <span>Editor de Sites com IA</span>
             </div>
             <div className="flex items-center gap-1">
@@ -1229,7 +1229,7 @@ export default function App() {
                   {/* Chat Header */}
                   <div className="p-4 border-b border-zinc-100 bg-zinc-900 text-white flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" />
+                      <img src="/favicon.svg" alt="Logo" className="w-4 h-4 invert brightness-0" referrerPolicy="no-referrer" />
                       <span className="font-medium text-sm">Assistente IA</span>
                     </div>
                     <div className="flex items-center gap-2">
