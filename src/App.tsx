@@ -24,13 +24,14 @@ import {
   Mic,
   MicOff,
   Image as ImageIcon,
-  Paperclip
+  Paperclip,
+  DollarSign
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { auth, db, secondaryAuth } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, updateDoc, increment } from 'firebase/firestore';
 import ReactMarkdown from 'react-markdown';
 
 import { GoogleGenAI, Modality } from "@google/genai";
@@ -43,6 +44,8 @@ const getAI = () => {
   }
   return new GoogleGenAI({ apiKey });
 };
+
+const COST_PER_EDIT = 0.05; // USD per AI edit
 
 const decodeBase64UTF8 = (base64: string) => {
   const binaryString = atob(base64);
@@ -76,6 +79,7 @@ interface UserData {
   role: 'admin' | 'client';
   name: string;
   allowedRepos: string[];
+  totalEdits?: number;
 }
 
 export default function App() {
@@ -92,6 +96,7 @@ export default function App() {
 
   // Admin Panel State
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [globalStats, setGlobalStats] = useState<{ totalEdits: number, estimatedTotalCost: number } | null>(null);
   const [clients, setClients] = useState<UserData[]>([]);
   const [isCreatingClient, setIsCreatingClient] = useState(false);
   const [editingClient, setEditingClient] = useState<UserData | null>(null);
@@ -226,6 +231,7 @@ export default function App() {
           }
           if (userData.role === 'admin') {
             fetchClients();
+            fetchGlobalStats();
           }
         } catch (error) {
           console.error("Erro ao verificar status do GitHub:", error);
@@ -235,6 +241,18 @@ export default function App() {
       checkStatusAndFetch();
     }
   }, [isAuthenticated, userData]);
+
+  const fetchGlobalStats = async () => {
+    try {
+      const globalRef = doc(db, 'stats', 'global');
+      const globalSnap = await getDoc(globalRef);
+      if (globalSnap.exists()) {
+        setGlobalStats(globalSnap.data() as any);
+      }
+    } catch (e) {
+      console.error("Error fetching global stats:", e);
+    }
+  };
 
   const fetchClients = async () => {
     try {
@@ -608,6 +626,35 @@ export default function App() {
     setAttachedMedia(prev => prev.filter((_, i) => i !== index));
   };
 
+  const trackUsage = async () => {
+    if (!user) return;
+    try {
+      // Update user stats
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        totalEdits: increment(1)
+      });
+
+      // Update global stats
+      const globalRef = doc(db, 'stats', 'global');
+      const globalSnap = await getDoc(globalRef);
+      
+      if (globalSnap.exists()) {
+        await updateDoc(globalRef, {
+          totalEdits: increment(1),
+          estimatedTotalCost: increment(COST_PER_EDIT)
+        });
+      } else {
+        await setDoc(globalRef, {
+          totalEdits: 1,
+          estimatedTotalCost: COST_PER_EDIT
+        });
+      }
+    } catch (e) {
+      console.error("Error tracking usage:", e);
+    }
+  };
+
   const handleSendMessage = async (overrideMsg?: string) => {
     const msgToSend = overrideMsg || chatInput;
     if (!msgToSend.trim() && attachedMedia.length === 0 && !selectedRepo) return;
@@ -701,6 +748,9 @@ export default function App() {
           });
 
           if (!commitRes.ok) throw new Error('Falha ao fazer commit');
+
+          // Track usage
+          await trackUsage();
 
           setChatMessages(prev => [...prev, { role: 'ai', text: 'Alteração concluída e enviada para o site! Atualizando a visualização em instantes...' }]);
           
@@ -943,6 +993,26 @@ export default function App() {
 
             {isAdminPanelOpen ? (
               <div className="space-y-4">
+                {/* Stats Section */}
+                <div className="grid grid-cols-2 gap-2 px-2">
+                  <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                    <div className="flex items-center gap-1.5 text-zinc-400 mb-1">
+                      <Sparkles className="w-3 h-3" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wider">Total Edições</span>
+                    </div>
+                    <p className="text-lg font-bold text-zinc-900">{globalStats?.totalEdits || 0}</p>
+                  </div>
+                  <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                    <div className="flex items-center gap-1.5 text-zinc-400 mb-1">
+                      <DollarSign className="w-3 h-3" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wider">Custo Est.</span>
+                    </div>
+                    <p className="text-lg font-bold text-zinc-900">
+                      ${globalStats?.estimatedTotalCost?.toFixed(2) || '0.00'}
+                    </p>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between px-2">
                   <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Clientes</h2>
                   <button 
@@ -1024,13 +1094,20 @@ export default function App() {
                           <p className="font-medium">{client.name}</p>
                           <p className="text-xs text-zinc-500">{client.email}</p>
                         </div>
-                        <button 
-                          onClick={() => setEditingClient(editingClient?.uid === client.uid ? null : client)}
-                          className="p-1 hover:bg-zinc-100 rounded-md transition-colors text-zinc-400 hover:text-zinc-600"
-                          title="Editar permissões"
-                        >
-                          <Settings className="w-4 h-4" />
-                        </button>
+                        <div className="flex flex-col items-end gap-1">
+                          <button 
+                            onClick={() => setEditingClient(editingClient?.uid === client.uid ? null : client)}
+                            className="p-1 hover:bg-zinc-100 rounded-md transition-colors text-zinc-400 hover:text-zinc-600"
+                            title="Editar permissões"
+                          >
+                            <Settings className="w-4 h-4" />
+                          </button>
+                          {client.totalEdits !== undefined && (
+                            <span className="text-[10px] bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded-full font-medium">
+                              {client.totalEdits} edits
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {editingClient?.uid === client.uid ? (

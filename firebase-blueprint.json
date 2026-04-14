@@ -14,15 +14,29 @@
           "items": { "type": "string" },
           "description": "List of repository full names (owner/repo) the client can access"
         },
+        "totalEdits": { "type": "number", "description": "Total number of AI edits made by this user" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]
+    },
+    "Stats": {
+      "title": "Stats",
+      "description": "Global application statistics",
+      "type": "object",
+      "properties": {
+        "totalEdits": { "type": "number", "description": "Total AI edits across the platform" },
+        "estimatedTotalCost": { "type": "number", "description": "Estimated total cost in USD" }
+      }
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/User" },
       "description": "Stores user profiles and permissions"
+    },
+    "/stats/global": {
+      "schema": { "$ref": "#/entities/Stats" },
+      "description": "Global stats for the admin"
     }
   }
 }
